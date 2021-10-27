@@ -159,6 +159,14 @@ def main(cfg: FairseqConfig) -> None:
         # don't cache epoch iterators for sharded datasets
         disable_iterator_cache=task.has_sharded_data("train"),
     )
+
+    if "my_model" in cfg.checkpoint['restore_file'].lower():
+        model.classification_heads.sentence_classification_head.out_proj.weight = \
+            torch.nn.Parameter(model.classification_heads.sentence_classification_head.out_proj.weight[[0, 2, 1], :])
+
+        model.classification_heads.sentence_classification_head.out_proj.bias = \
+            torch.nn.Parameter(model.classification_heads.sentence_classification_head.out_proj.bias[[0, 2, 1]])
+
     if cfg.common.tpu:
         import torch_xla.core.xla_model as xm
         xm.rendezvous("load_checkpoint")  # wait for all workers
