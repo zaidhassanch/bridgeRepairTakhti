@@ -432,13 +432,13 @@ class TransformerEncoder(FairseqEncoder):
             token_embedding = self.embed_tokens(src_tokens)
         x = embed = self.embed_scale * token_embedding
         if self.embed_positions is not None:
-            positions = self.embed_positions(src_tokens)
+            x = embed + self.embed_positions(src_tokens)
         if self.layernorm_embedding is not None:
             x = self.layernorm_embedding(x)
         x = self.dropout_module(x)
         if self.quant_noise is not None:
             x = self.quant_noise(x)
-        return x, positions
+        return x, embed
 
     def forward(
         self,
@@ -515,17 +515,14 @@ class TransformerEncoder(FairseqEncoder):
         encoder_padding_mask = src_tokens.eq(self.padding_idx)
         has_pads = src_tokens.device.type == "xla" or encoder_padding_mask.any()
 
-        x, positions = self.forward_embedding(src_tokens, token_embeddings)
+        x, encoder_embedding = self.forward_embedding(src_tokens, token_embeddings)
 
         # account for padding while computing the representation
         if has_pads:
             x = x * (1 - encoder_padding_mask.unsqueeze(-1).type_as(x))
 
-        x += positions
-
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
-        positions = positions.transpose(0, 1)
 
         encoder_states = []
 
@@ -534,7 +531,6 @@ class TransformerEncoder(FairseqEncoder):
 
         # encoder layers
         for layer in self.layers:
-            x += positions
             x = layer(
                 x, encoder_padding_mask=encoder_padding_mask if has_pads else None
             )
@@ -552,7 +548,7 @@ class TransformerEncoder(FairseqEncoder):
         return {
             "encoder_out": [x],  # T x B x C
             "encoder_padding_mask": [encoder_padding_mask],  # B x T
-            "encoder_embedding": [positions],  # B x T x C
+            "encoder_embedding": [encoder_embedding],  # B x T x C
             "encoder_states": encoder_states,  # List[T x B x C]
             "src_tokens": [],
             "src_lengths": [],
@@ -938,10 +934,6 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
 
-        # addition
-        positions = positions.transpose(0, 1)
-        # addition
-
         self_attn_padding_mask: Optional[Tensor] = None
         if self.cross_self_attention or prev_output_tokens.eq(self.padding_idx).any():
             self_attn_padding_mask = prev_output_tokens.eq(self.padding_idx)
@@ -954,12 +946,6 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 self_attn_mask = self.buffered_future_mask(x)
             else:
                 self_attn_mask = None
-
-            # addition
-            if positions is not None:
-                x += positions
-                # print("abc")
-            # addition
 
             x, layer_attn, _ = layer(
                 x,
